@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AI Chat Search (ChatGPT Style)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { margin:0; font-family:Arial; background:#f5f5f5; overflow:hidden; }
+#topbar { width:100%; background:#fff; padding:10px 15px; border-bottom:1px solid #ddd; display:flex; justify-content:space-between; align-items:center; box-sizing:border-box; }
+#title { font-size:18px; font-weight:bold; }
+#clearBtn { padding:7px 13px; border:1px solid #ccc; border-radius:15px; background:#f5f5f5; cursor:pointer; font-size:14px; }
+#chatbox { height:calc(100vh - 190px); overflow-y:auto; padding:15px; display:flex; flex-direction:column; gap:10px; box-sizing:border-box; }
+.msg { max-width:75%; padding:12px 15px; border-radius:15px; font-size:16px; line-height:1.4; word-wrap:break-word; }
+.user { background:#007aff; color:#fff; align-self:flex-end; border-bottom-right-radius:0; }
+.bot { background:#fff; color:#222; border:1px solid #ddd; align-self:flex-start; border-bottom-left-radius:0; }
+#input-area { position:fixed; bottom:70px; left:0; width:100%; display:flex; background:#fff; padding:10px; border-top:1px solid #ccc; box-sizing:border-box; }
+#q { flex:1; padding:12px 15px; border:1px solid #ccc; border-radius:25px; font-size:16px; outline:none; }
+#btn { width:48px; height:48px; margin-left:10px; background:url('m.png') no-repeat center; background-size:cover; border:none; border-radius:50%; cursor:pointer; }
+#ad-space { position: fixed; bottom: 0; left: 0; width: 100%; height: 70px; background: #fff; display: flex; justify-content: center; align-items: center; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+    <div id="title">AI Chat</div>
+    <button id="clearBtn">Clear Chat</button>
+</div>
+
+<div id="chatbox"></div>
+
+<div id="input-area">
+    <input id="q" placeholder="Ask here..." />
+    <button id="btn"></button>
+</div>
+
+<div id="ad-space"></div>
+
+<script>
+// ---------------- SAFE FETCH ----------------
+async function safeFetch(url) {
+    try { 
+        const r = await fetch(url, { cache: "no-store" });
+        return await r.json();
+    } catch { return null; }
+}
+
+// ---------------- RANK ANSWERS ----------------
+function rankAnswer(ans) {
+    if (!ans) return 0;
+    let score = 0;
+    if (ans.includes("http")) score += 2;
+    if (ans.length > 20) score += 3;
+    if (ans.toLowerCase().includes("price")) score += 2;
+    if (ans.toLowerCase().includes("business")) score += 3;
+    if (ans.length > 80) score += 3;
+    return score;
+}
+
+// ---------------- MAIN ASK ----------------
+async function ask(q) {
+    const ql = q.toLowerCase();
+    let answers = [];
+    let handled = false; // <-- Track if any other if already handled
+
+    // ---------- IMAGE GENERATION ----------
+    if (ql.includes("generate") || ql.includes("image") || ql.includes("draw")) {
+        handled = true;
+        const prompt = q.replace(/generate|image|draw/gi, "").trim();
+        const seed = Math.floor(Math.random() * 1000000);
+        return `
+            <img
+              src="https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=flux&width=512&height=512&seed=${seed}&nologo=true&referrer=chat&nocache=${Date.now()}"
+              style="width:100%; margin-bottom:10px; border-radius:10px;"
+            />
+        `;
+    }
+    
+
+    // ---------- PIXABAY PHOTOS ----------
+    if (ql.includes("image") || ql.includes("photo") || ql.includes("pixabay") || ql.includes("draw")) {
+        handled = true;
+        const searchTerm = q.replace(/image|photo|pixabay|draw/g, "").trim();
+        const result = await searchPixabay(searchTerm);
+        return result;
+    }
+
+    // ---------- DUCKDUCKGO ----------
+    const dd = await safeFetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`);
+    if (dd?.Abstract) answers.push(dd.Abstract);
+    if (dd?.RelatedTopics?.[0]?.Text) answers.push(dd.RelatedTopics[0].Text);
+
+    // ---------- DICTIONARY ----------
+    if (ql.includes("meaning") || ql.includes("define")) {
+        handled = true;
+        const word = q.replace(/meaning|define/g, "").trim();
+        const res = await safeFetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+        if (res && res[0]) {
+            const def = res[0].meanings[0].definitions[0].definition;
+            return `Technical Definition: ${def}`;
+        }
+    }
+
+    // ---------- BUSINESS IDEAS ----------
+    if (ql.includes("business idea") || ql.includes("project") || ql.includes("build")) {
+        handled = true;
+        const res = await safeFetch("https://www.boredapi.com/api/activity?type=recreational");
+        if (res) {
+            return `Business/Project Idea: Why not create a platform for ${res.activity.toLowerCase()}? It's a growing niche!`;
+        }
+    }
+
+    // ---------- MARKET DATA ----------
+    if (ql.includes("price") || ql.includes("bitcoin") || ql.includes("market")) {
+        handled = true;
+        const res = await safeFetch("https://api.coindesk.com/v1/bpi/currentprice.json");
+        if (res) {
+            const price = res.bpi.USD.rate;
+            return `Market Update: Bitcoin is currently at $${price}.`;
+        }
+    }
+
+    // ---------- JOKES ----------
+    if (ql.includes("joke") || ql.includes("funny")) {
+        handled = true;
+        const jk = await safeFetch("https://official-joke-api.appspot.com/random_joke");
+        if (jk?.setup) return jk.setup + " - " + jk.punchline;
+    }
+    if (!handled && (ql.includes("inr") || ql.includes("usd"))) {
+    handled = true;
+    const fx = await safeFetch("https://open.er-api.com/v6/latest/INR");
+    if (fx?.rates) return `1 INR = ${fx.rates.USD} USD`;
+}
+if (!handled && (ql.includes("gdp") || ql.includes("economy"))) {
+    handled = true;
+    const wb = await safeFetch("https://api.worldbank.org/v2/country/in/indicator/NY.GDP.MKTP.CD?format=json");
+    if (wb?.[1]?.[0]) return `India GDP: $${wb[1][0].value}`;
+}
+if (!handled && (ql.includes("weather") || ql.includes("temperature"))) {
+    handled = true;
+    const w = await safeFetch("https://api.open-meteo.com/v1/forecast?latitude=13.3&longitude=74.7&hourly=temperature_2m");
+    if (w?.hourly?.temperature_2m) return `Current Temperature: ${w.hourly.temperature_2m[0]}°C`;
+}
+if (!handled && ql.includes("product")) {
+    handled = true;
+    const f = await safeFetch("https://fakestoreapi.com/products");
+    if (f?.length) return `Product Example:<br>${f[0].title}<br>Price: $${f[0].price}`;
+}
+if (!handled && (ql.includes("bored") || ql.includes("activity"))) {
+    handled = true;
+    const ac = await safeFetch("https://www.boredapi.com/api/activity");
+    if (ac?.activity) return `Try this: ${ac.activity}`;
+}
+if (!handled && (ql.includes("animal fact") || ql.includes("animal"))) {
+    handled = true;
+    const af = await safeFetch("https://zoo-animal-api.herokuapp.com/animals/rand");
+    if (af?.name) return `Animal Fact: ${af.name} — ${af.latin_name}, Habitat: ${af.habitat}`;
+}
+if (!handled && (ql.includes("code") || ql.includes("programming"))) {
+    handled = true;
+    const tip = await safeFetch("https://api.adviceslip.com/advice"); // reuse advice API
+    if (tip?.slip?.advice) return `Coding Tip: ${tip.slip.advice}`;
+}if (!handled && (ql.includes("quote") || ql.includes("motivation"))) {
+    handled = true;
+    const quote = await safeFetch("https://api.quotable.io/random");
+    if (quote?.content) return `"${quote.content}" — ${quote.author}`;
+}if (!handled && (ql.includes("space") || ql.includes("astronomy"))) {
+    handled = true;
+    const apod = await safeFetch("https://api.le-systeme-solaire.net/rest/bodies/earth");
+    if (apod?.englishName) return `Astronomy Fact: Earth info: Mass=${apod.mass?.massValue} kg, Gravity=${apod.gravity} m/s²`;
+}if (!handled && (ql.includes("fact") || ql.includes("trivia"))) {
+    handled = true;
+    const tf = await safeFetch("https://uselessfacts.jsph.pl/random.json?language=en");
+    if (tf?.text) return `Fun Fact: ${tf.text}`;
+}if (!handled && (ql.includes("forex") || ql.includes("usd") || ql.includes("inr") || ql.includes("eur") || ql.includes("currency"))) {
+    handled = true;
+    const fx = await safeFetch("https://open.er-api.com/v6/latest/USD");
+    if (fx?.rates) {
+        return `
+            Forex Rates (USD Base):<br>
+            USD → INR: ${fx.rates.INR}<br>
+            USD → EUR: ${fx.rates.EUR}<br>
+            USD → GBP: ${fx.rates.GBP}<br>
+            USD → JPY: ${fx.rates.JPY}
+        `;
+    }
+}
+if (!handled && (ql.includes("crypto") || ql.includes("bitcoin") || ql.includes("ethereum") || ql.includes("market"))) {
+    handled = true;
+    const crypto = await safeFetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,dogecoin&vs_currencies=usd");
+    if (crypto) {
+        return `
+            Crypto Prices:<br>
+            Bitcoin: $${crypto.bitcoin.usd}<br>
+            Ethereum: $${crypto.ethereum.usd}<br>
+            Dogecoin: $${crypto.dogecoin.usd}
+        `;
+    }
+    if (!handled && ql.includes("forex") && !ql.includes("usd")) {
+    handled = true;
+    const fx = await safeFetch("https://open.er-api.com/v6/latest/EUR");
+    if (fx?.rates) {
+        return `
+            Forex Rates (EUR Base):<br>
+            EUR → USD: ${fx.rates.USD}<br>
+            EUR → INR: ${fx.rates.INR}<br>
+            EUR → GBP: ${fx.rates.GBP}<br>
+            EUR → JPY: ${fx.rates.JPY}
+        `;
+    }
+}
+if (!handled && ql.includes("space fact") || ql.includes("nasa fact")) {
+    handled = true;
+    const sp = await safeFetch("https://api.le-systeme-solaire.net/rest/bodies/");
+    if (sp?.bodies?.length) return `Random Space Body: ${sp.bodies[0].englishName}, Type: ${sp.bodies[0].bodyType}`;
+}
+}if (!handled && ql.includes("forex") && q.match(/(\b[A-Z]{3}\b).*(\b[A-Z]{3}\b)/)) {
+    handled = true;
+    const matches = q.match(/(\b[A-Z]{3}\b).*(\b[A-Z]{3}\b)/);
+    const from = matches[1];
+    const to = matches[2];
+    const fxData = await safeFetch(`https://open.er-api.com/v6/latest/${from}`);
+    if (fxData?.rates?.[to]) {
+        return `Forex Rate: 1 ${from} = ${fxData.rates[to]} ${to}`;
+    } else {
+        return `Forex Rate for ${from} → ${to} not found.`;
+    }
+}if (!handled && (ql.includes("nasa") || ql.includes("space picture") || ql.includes("astronomy"))) {
+    handled = true;
+    const apod = await safeFetch("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY");
+    if (apod?.url) return `<b>${apod.title}</b><br><img src="${apod.url}" style="width:100%; border-radius:10px;"><br>${apod.explanation}`;
+}if (!handled && (ql.includes("crypto") || ql.includes("bitcoin") || ql.includes("ethereum"))) {
+    handled = true;
+    const crypto = await safeFetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,dogecoin&vs_currencies=usd");
+    if (crypto) return `Bitcoin: $${crypto.bitcoin.usd}<br>Ethereum: $${crypto.ethereum.usd}<br>Dogecoin: $${crypto.dogecoin.usd}`;
+}if (!handled && (ql.includes("animal fact") || ql.includes("animal"))) {
+    handled = true;
+    const af = await safeFetch("https://zoo-animal-api.herokuapp.com/animals/rand");
+    if (af?.name) return `Animal Fact: ${af.name} — ${af.latin_name}, Habitat: ${af.habitat}`;
+}if (!handled && ql.includes("cat")) {
+    handled = true;
+    const cat = await safeFetch("https://api.thecatapi.com/v1/images/search");
+    if (cat?.[0]?.url) return `<img src="${cat[0].url}" style="width:100%; border-radius:10px;">`;
+}
+if (!handled && (ql.includes("bitcoin price") || ql.includes("btc"))) {
+    handled = true;
+    const btc = await safeFetch("https://api.coindesk.com/v1/bpi/currentprice.json");
+    if (btc?.bpi?.USD?.rate) return `Bitcoin (BTC) Current Price: $${btc.bpi.USD.rate}`;
+}
+if (!handled && (ql.includes("advice") || ql.includes("tip"))) {
+    handled = true;
+    const ad = await safeFetch("https://api.adviceslip.com/advice");
+    if (ad?.slip?.advice) return `Advice: ${ad.slip.advice}`;
+}
+    // ---------- FALLBACK: WIKIPEDIA ----------
+    if (!handled) {
+        const searchURL =
+          `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&format=json&origin=*`;
+
+        const searchData = await safeFetch(searchURL);
+
+        if (searchData?.query?.search?.length) {
+            let wikiText = "";
+            const max = Math.min(3, searchData.query.search.length);
+
+            for (let i = 0; i < max; i++) {
+                const title = searchData.query.search[i].title;
+
+                const contentURL =
+                  `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+
+                const contentData = await safeFetch(contentURL);
+
+                if (contentData?.query?.pages) {
+                    const page = Object.values(contentData.query.pages)[0];
+                    if (page?.extract) {
+                        wikiText +=
+                          `<b>${page.title}</b><br>` +
+                          page.extract.substring(0, 1800).replace(/\n/g, "<br><br>") +
+                          "<br><br>";
+                    }
+                }
+            }
+
+            if (wikiText.length > 50) {
+                return `<b>Knowledge (Wikipedia)</b><br><br>${wikiText}`;
+            }
+        }
+    }
+
+    // ---------- FINAL FALLBACK ----------
+    if (!answers.length) return "No answer found.";
+    answers.sort((a, b) => rankAnswer(b) - rankAnswer(a));
+    return answers[0];
+}
+
+// ---------------- UI & SAVE LOGIC ----------------
+function saveChat() {
+    const messages = [];
+    document.querySelectorAll('#chatbox .msg').forEach(el => {
+        messages.push({ text: el.innerHTML, user: el.classList.contains('user') });
+    });
+    localStorage.setItem('chatHistory', JSON.stringify(messages));
+}
+
+function loadChat() {
+    const messages = JSON.parse(localStorage.getItem('chatHistory') || "[]");
+    messages.forEach(m => addMessage(m.text, m.user, true));
+}
+
+function addMessage(text, isUser = false, isLoading = false) {
+    const box = document.getElementById("chatbox");
+    const div = document.createElement("div");
+    div.className = "msg " + (isUser ? "user" : "bot");
+    
+    if (isUser) div.innerText = text;
+    else div.innerHTML = text;
+
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    if (!isLoading) saveChat();
+}
+
+async function sendMessage() {
+    const q = document.getElementById("q").value.trim();
+    if (!q) return;
+
+    addMessage(q, true);
+    document.getElementById("q").value = "";
+
+    const box = document.getElementById("chatbox");
+    const thinkingDiv = document.createElement("div");
+    thinkingDiv.className = "msg bot";
+    thinkingDiv.innerText = "search...";
+    box.appendChild(thinkingDiv);
+    box.scrollTop = box.scrollHeight;
+
+    try {
+        const ans = await ask(q);
+        thinkingDiv.innerHTML = ans;
+        saveChat();
+    } catch {
+        thinkingDiv.innerText = "Error fetching response.";
+    }
+}
+
+document.getElementById("btn").onclick = sendMessage;
+document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(); });
+document.getElementById("clearBtn").onclick = () => { localStorage.removeItem("chatHistory"); document.getElementById("chatbox").innerHTML = ""; };
+
+window.onload = loadChat;
+</script>
+</body>
+</html>
